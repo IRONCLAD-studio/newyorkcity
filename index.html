@@ -11005,14 +11005,15 @@ if (uRceOn > 0.5) {
   float mB = gBrick * bs, mS = (1.0 - mB) * gStone * bs, mC = 1.0 - mB - mS; vec3 mw = vec3(mC, mS, mB);
   float eT = 0.0016;
   vec4 dT = texture2D(tRceD, rp), rT = texture2D(tRceR, rp), h0v = texture2D(tRceH, rp), hxv = texture2D(tRceH, rp + vec2(eT, 0.0)), hyv = texture2D(tRceH, rp + vec2(0.0, eT));
-  float k = dK * sM * uRceDetail;
+  float k = dK * sM * uRceDetail * 0.68;
   float dv = dot(dT.rgb, mw), rv = dot(rT.rgb, mw), h0 = dot(h0v.rgb, mw), hx = dot(hxv.rgb, mw), hy = dot(hyv.rgb, mw);
   float wetW = uRceWet * sM;
-  col *= mix(1.0, clamp(dv * 2.0, 0.40, 1.7), k);
+  // Exterior albedo variation is softened to avoid excessive mottling on brick/stone facades.
+  col *= mix(1.0, clamp(0.88 + (dv - 0.5) * 0.72, 0.76, 1.24), k);
   col *= mix(1.0, 0.74 - 0.1 * (1.0 - smoothstep(0.0, 4.0, y)), wetW * dK);
-  rough = mix(rough, clamp(rough * (0.62 + 0.76 * rv), 0.04, 1.0), k);
+  rough = mix(rough, clamp(rough * (0.78 + 0.42 * rv), 0.12, 1.0), k);
   rough *= mix(1.0, 0.62, wetW * dK);
-  float relief = mix(0.004, 0.009, mS + mB);
+  float relief = mix(0.003, 0.006, mS + mB);
   vec2 gd = vec2(hx - h0, hy - h0) / (eT * uRceTileM) * relief;
   gDN += -(gd.x * T3 + gd.y * vec3(0.0, 1.0, 0.0)) * 0.85 * k;
   // --- 유리: 먼지/물때 + 비 오는 날 흘러내리는 물줄기 + 빗방울 비드 + 환경 반사
@@ -11055,7 +11056,7 @@ if (uRceOn > 0.5) {
   vec3 T3f_ = vec3(-wn.z, 0.0, wn.x); float uF_ = dot(vLP.xz - vAnc, T3f_.xz) + seed * 23.7;
   float gHf_ = gShopT > 0.5 ? (H < 22.0 ? 4.7 : (H < 70.0 ? 5.4 : 8.0)) : 0.0;
   vec3 fa_, fe_; rceFar(uF_, y - gHf_, wn, vv, fa_, fe_);
-  diffuseColor.rgb = mix(diffuseColor.rgb, fa_ * (0.86 + 0.28 * fbm(vWP.xz * 0.05 + vWP.y * 0.02)) * mix(0.62, 1.0, smoothstep(0.0, 40.0, y)), 0.9);
+  diffuseColor.rgb = mix(diffuseColor.rgb, fa_ * (0.92 + 0.12 * fbm(vWP.xz * 0.035 + vWP.y * 0.012)) * mix(0.62, 1.0, smoothstep(0.0, 40.0, y)), 0.9);
   totalEmissiveRadiance += fe_;
 }
 #endif`;
@@ -11215,12 +11216,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = RealisticC
 
 </script>
 
-<!-- NYC facade depth enhancement v3: procedural recessed window frames and mullions -->
+<!-- NYC facade depth enhancement v4: procedural recessed window frames and mullions -->
 <script>
 (function () {
   'use strict';
-  if (typeof nmWallOBC !== 'function' || window.__NYC_FACADE_DEPTH_V3) return;
-  window.__NYC_FACADE_DEPTH_V3 = true;
+  if (typeof nmWallOBC !== 'function' || window.__NYC_FACADE_DEPTH_V4) return;
+  window.__NYC_FACADE_DEPTH_V4 = true;
   const previous = nmWallOBC;
   nmWallOBC = function (sh) {
     previous.apply(this, arguments);
@@ -11248,7 +11249,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = RealisticC
     }
     const oldKey = sh.customProgramCacheKey;
     sh.customProgramCacheKey = function () {
-      return (oldKey ? oldKey.call(this) : '') + '|NYC_FACADE_DEPTH_V3';
+      return (oldKey ? oldKey.call(this) : '') + '|NYC_FACADE_DEPTH_V4';
     };
   };
 })();
