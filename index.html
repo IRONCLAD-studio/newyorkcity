@@ -11215,12 +11215,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = RealisticC
 
 </script>
 
-<!-- NYC facade depth enhancement v2: procedural recessed window frames and mullions -->
+<!-- NYC facade depth enhancement v3: procedural recessed window frames and mullions -->
 <script>
 (function () {
   'use strict';
-  if (typeof nmWallOBC !== 'function' || window.__NYC_FACADE_DEPTH_V2) return;
-  window.__NYC_FACADE_DEPTH_V2 = true;
+  if (typeof nmWallOBC !== 'function' || window.__NYC_FACADE_DEPTH_V3) return;
+  window.__NYC_FACADE_DEPTH_V3 = true;
   const previous = nmWallOBC;
   nmWallOBC = function (sh) {
     previous.apply(this, arguments);
@@ -11230,23 +11230,25 @@ if (typeof module !== 'undefined' && module.exports) module.exports = RealisticC
       // uvW is the existing per-window local coordinate; no extra meshes/draw calls.
       float edgeD = min(min(uvW.x, 1.0 - uvW.x), min(uvW.y, 1.0 - uvW.y));
       float aaD = max(fwidth(edgeD), 0.0015);
-      float frameD = 1.0 - smoothstep(0.035 - aaD, 0.065 + aaD, edgeD);
-      float mullV = 1.0 - smoothstep(0.012 - aaD, 0.026 + aaD, abs(uvW.x - 0.5));
-      float mullH = 1.0 - smoothstep(0.012 - aaD, 0.026 + aaD, abs(uvW.y - 0.5));
+      float frameD = 1.0 - smoothstep(0.050 - aaD, 0.090 + aaD, edgeD);
+      float mullV = 1.0 - smoothstep(0.018 - aaD, 0.038 + aaD, abs(uvW.x - 0.5));
+      float mullH = 1.0 - smoothstep(0.018 - aaD, 0.038 + aaD, abs(uvW.y - 0.5));
       float mullD = max(mullV, mullH) * (1.0 - frameD);
-      vec3 frameShadeD = mix(col * 0.72, col * 1.08 + vec3(0.018), smoothstep(0.0, 0.055, edgeD));
-      glassC = mix(glassC, frameShadeD, clamp(frameD * 0.88, 0.0, 0.88));
-      glassC = mix(glassC, glassC * 0.58 + col * 0.42, mullD * 0.72);
-      // A subtle inset shadow at the glass perimeter emphasizes the cavity.
-      float insetD = smoothstep(0.065, 0.105, edgeD) * (1.0 - smoothstep(0.12, 0.18, edgeD));
-      glassC *= 1.0 - insetD * 0.12;
+      vec3 frameShadeD = mix(col * 0.58, col * 1.12 + vec3(0.026), smoothstep(0.0, 0.075, edgeD));
+      glassC = mix(glassC, frameShadeD, clamp(frameD * 0.94, 0.0, 0.94));
+      glassC = mix(glassC, glassC * 0.48 + col * 0.52, mullD * 0.82);
+      // Stronger inset edge shade and a subtle lower sill line improve facade readability.
+      float insetD = smoothstep(0.085, 0.125, edgeD) * (1.0 - smoothstep(0.15, 0.22, edgeD));
+      float sillD = 1.0 - smoothstep(0.018 - aaD, 0.040 + aaD, abs(uvW.y - 0.08));
+      glassC *= 1.0 - insetD * 0.20;
+      glassC = mix(glassC, col * 0.62, sillD * (1.0 - frameD) * 0.34);
       col = mix(col, glassC, gls * 0.94 * uWinQ);`;
     if (sh.fragmentShader.indexOf(marker) >= 0) {
       sh.fragmentShader = sh.fragmentShader.replace(marker, enhanced);
     }
     const oldKey = sh.customProgramCacheKey;
     sh.customProgramCacheKey = function () {
-      return (oldKey ? oldKey.call(this) : '') + '|NYC_FACADE_DEPTH_V2';
+      return (oldKey ? oldKey.call(this) : '') + '|NYC_FACADE_DEPTH_V3';
     };
   };
 })();
