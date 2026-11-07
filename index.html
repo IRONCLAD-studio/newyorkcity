@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spider-Man: Brand New Day - 3D Physics Engine Sandbox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Pretendard:wght@400;600;700&display=swap');
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #07090e;
+            font-family: 'Pretendard', sans-serif;
+            user-select: none;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        /* 커스텀 스크롤바 및 슬라이더 */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.12);
+            height: 6px;
+            border-radius: 3px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 14px;
+            width: 14px;
+            border-radius: 50%;
+            background: #ef4444;
+            cursor: pointer;
+            border: 2px solid #ffffff;
+        }
+        .hud-panel {
+            background: rgba(11, 15, 25, 0.82);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .speed-lines {
+            background: radial-gradient(circle, transparent 50%, rgba(255, 255, 255, 0.08) 100%);
+            pointer-events: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+        }
+    </style>
+</head>
+<body class="text-slate-100">
+
+    <!-- 3D 캔버스 컨테이너 -->
+    <div id="canvas-container">
+        <!-- 고속 이동 시 시각 효과 오버레이 -->
+        <div id="speed-overlay" class="speed-lines absolute inset-0 opacity-0 transition-opacity duration-150"></div>
+
+        <!-- 좌측 상단: 실시간 물리 텔레메트리 HUD -->
+        <div class="hud-panel absolute top-4 left-4 p-4 rounded-xl w-80 shadow-2xl z-10">
+            <div class="flex items-center justify-between border-b border-slate-700/70 pb-2 mb-3">
+                <div>
+                    <span class="text-xs font-bold tracking-wider uppercase text-red-500 block">PHYSICS TELEMETRY</span>
+                    <h1 class="text-sm font-bold text-white">스파이더맨 실시간 운동역학 모니터</h1>
+                </div>
+                <span id="state-badge" class="px-2 py-0.5 text-xs font-bold rounded bg-blue-500/20 text-blue-400 border border-blue-500/40 mono">
+                    FREE_FALL
+                </span>
+            </div>
+
+            <!-- 주요 속도 계기판 -->
+            <div class="grid grid-cols-2 gap-2 mb-3">
+                <div class="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                    <div class="text-[11px] text-slate-400">현재 이동 속도 (Speed)</div>
+                    <div class="text-xl font-bold text-white mono"><span id="val-kmh">0.0</span> <span class="text-xs text-slate-400">km/h</span></div>
+                    <div class="text-xs text-emerald-400 mono"><span id="val-ms">0.0</span> m/s</div>
+                </div>
+                <div class="bg-slate-900/90 p-2.5 rounded-lg border border-slate-800">
+                    <div class="text-[11px] text-slate-400">체감 가속도 (G-Force)</div>
+                    <div class="text-xl font-bold text-amber-400 mono"><span id="val-g">1.00</span> <span class="text-xs text-slate-400">G</span></div>
+                    <div class="text-xs text-slate-400 mono">구심: <span id="val-ac">0.0</span> m/s²</div>
+                </div>
+            </div>
+
+            <!-- 세부 물리량 -->
+            <div class="space-y-1.5 text-xs mono">
+                <div class="flex justify-between">
+                    <span class="text-slate-400">현재 고도 (Altitude):</span>
+                    <span class="text-slate-200 font-semibold"><span id="val-alt">350.0</span> m</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">스윙 진입 속도 (v_entry):</span>
+                    <span class="text-cyan-400 font-semibold"><span id="val-ventry">0.0</span> m/s</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">거미줄 장력 (Web Tension):</span>
+                    <span class="text-rose-400 font-semibold"><span id="val-tension">0</span> N (<span id="val-kgf">0</span> kgf)</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">거미줄 길이 / 신축률:</span>
+                    <span class="text-slate-200"><span id="val-roplen">-</span> m (<span id="val-stretch">0.0</span>%)</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">공기 저항 (Drag Force):</span>
+                    <span class="text-slate-300"><span id="val-drag">0</span> N</span>
+                </div>
+            </div>
+
+            <!-- 역학적 에너지 바 (위치 에너지 vs 운동 에너지) -->
+            <div class="mt-3 pt-2 border-t border-slate-800">
+                <div class="flex justify-between text-[10px] text-slate-400 mb-1">
+                    <span>위치 에너지 (E_p)</span>
+                    <span>운동 에너지 (E_k)</span>
+                </div>
+                <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden flex">
+                    <div id="bar-ep" class="bg-blue-500 h-full transition-all duration-75" style="width: 80%"></div>
+                    <div id="bar-ek" class="bg-red-500 h-full transition-all duration-75" style="width: 20%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 우측 상단: 시나리오 테스트 프리셋 & 물리 파라미터 튜닝 -->
+        <div class="hud-panel absolute top-4 right-4 p-4 rounded-xl w-80 shadow-2xl z-10">
+            <div class="border-b border-slate-700/70 pb-2 mb-3">
+                <span class="text-xs font-bold tracking-wider uppercase text-blue-400 block">SCENARIO & TUNING</span>
+                <h2 class="text-sm font-bold text-white">진입 속도별 물리 검증 테스트</h2>
+            </div>
+
+            <!-- 시나리오 프리셋 버튼 (정지 진입 vs 초고속 다이빙 진입 비교) -->
+            <div class="space-y-1.5 mb-4">
+                <button id="btn-preset-dive" class="w-full py-2 px-3 bg-red-600 hover:bg-red-500 text-white font-semibold text-xs rounded-lg shadow transition flex items-center justify-between">
+                    <span>1. 영화 오프닝 (360m 고공 다이빙)</span>
+                    <span class="mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded">Max 246km/h</span>
+                </button>
+                <button id="btn-preset-low" class="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-lg border border-slate-700 transition flex items-center justify-between">
+                    <span>2. 저속/정지 상태 스윙 (급발진 방지 검증)</span>
+                    <span class="mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded">v_entry = 0m/s</span>
+                </button>
+                <button id="btn-preset-mid" class="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-lg border border-slate-700 transition flex items-center justify-between">
+                    <span>3. 도심 연속 중속 스윙 (관성 유지)</span>
+                    <span class="mono text-[10px] bg-black/30 px-1.5 py-0.5 rounded">v_entry = 28m/s</span>
+                </button>
+            </div>
+
+            <!-- 물리 엔진 파라미터 슬라이더 -->
+            <div class="space-y-2.5 text-xs border-t border-slate-800 pt-3">
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <span class="text-slate-300">캐릭터 질량 (Mass)</span>
+                        <span class="mono text-red-400"><span id="lbl-mass">66</span> kg</span>
+                    </div>
+                    <input id="slider-mass" type="range" min="50" max="100" step="1" value="66" class="w-full">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <span class="text-slate-300">거미줄 탄성 계수 (Spring k)</span>
+                        <span class="mono text-red-400"><span id="lbl-k">850</span> N/m</span>
+                    </div>
+                    <input id="slider-k" type="range" min="300" max="2000" step="50" value="850" class="w-full">
+                </div>
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <span class="text-slate-300">거미줄 댐핑 감쇠 (Damper c)</span>
+                        <span class="mono text-red-400"><span id="lbl-c">140</span> N·s/m</span>
+                    </div>
+                    <input id="slider-c" type="range" min="20" max="400" step="10" value="140" class="w-full">
+                </div>
+            </div>
+
+            <!-- 시점 전환 -->
+            <div class="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between">
+                <span class="text-xs text-slate-400">카메라 시점 모드</span>
+                <button id="btn-cam-mode" class="px-3 py-1 bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 rounded text-xs font-bold text-blue-300 transition">
+                    3인칭 추적 시점 (3rd Person)
+                </button>
+            </div>
+            <!-- 마우스 드래그 안내 -->
+            <div class="mt-2 text-[11px] text-slate-400 text-right">
+                🖱️ 화면 마우스 드래그: 카메라 각도 회전
+            </div>
+        </div>
+
+        <!-- 하단 중앙: 조작 가이드 및 인터랙티브 컨트롤 버튼 -->
+        <div class="hud-panel absolute bottom-4 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl shadow-2xl z-10 flex flex-col items-center gap-2 border border-slate-700/80">
+            <div class="flex items-center gap-2">
+                <button id="btn-action-dive" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-red-600 border border-slate-600 text-xs font-bold transition flex items-center gap-1.5">
+                    <span class="px-1.5 py-0.5 bg-slate-950 rounded text-[10px] mono text-amber-400">Shift</span>
+                    <span>유선형 다이빙 (항력 감소)</span>
+                </button>
+                <button id="btn-action-web" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 active:bg-red-700 text-white text-xs font-bold shadow-lg shadow-red-600/30 transition flex items-center gap-1.5">
+                    <span class="px-1.5 py-0.5 bg-black/40 rounded text-[10px] mono">Space / 마우스클릭</span>
+                    <span>웹 발사 및 홀드 (Web Swing)</span>
+                </button>
+                <button id="btn-action-pull" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-blue-600 border border-slate-600 text-xs font-bold transition flex items-center gap-1.5">
+                    <span class="px-1.5 py-0.5 bg-slate-950 rounded text-[10px] mono text-cyan-400">W / E</span>
+                    <span>양손 웹 견인 가속 (Pull Boost)</span>
+                </button>
+            </div>
+            <p class="text-[11px] text-slate-400 text-center">
+                팁: 고공에서 <span class="text-amber-400 font-semibold">Shift</span>로 시속 240km/h까지 가속한 뒤 지면 근처에서 <span class="text-red-400 font-semibold">Space(홀드)</span>를 눌러 최저점 7.5G 스윙을 체험하세요!
+            </p>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * 스파이더맨: 브랜드 뉴 데이 - 100% 물리 기반 진자 및 탄성 웹 스윙 엔진
+         * ============================================================================
+         * - 고정 속도 하드코딩 배제: 진입 속도(v_entry)와 위치 에너지(mgh) 보존 법칙만 사용
+         * - 공기 저항: F_d = 0.5 * rho * v^2 * C_d * A (일반 체공 vs 유선형 다이빙)
+         * - 비대칭 스프링-댐퍼 로프: 거리(d) > 초기길이(L)일 때만 장력(F_t) 발생
+         * - 지면 스침 보정(Ground Clearance Assist): 최저점 바닥 충돌 방지용 유효 길이 단축
+         */
+        const PhysicsConfig = {
+            mass: 66.0,                 // 톰 홀랜드 스파이더맨 질량 (kg)
+            gravity: 9.81,              // 중력 가속도 (m/s^2)
+            airDensity: 1.225,          // 해수면 공기 밀도 (kg/m^3)
+            cdNormal: 0.70,             // 일반 체공 항력 계수
+            areaNormal: 0.65,           // 일반 체공 단면적 (m^2) -> 종단속도 약 54 m/s (195 km/h)
+            cdDiving: 0.35,             // 유선형 다이빙 항력 계수
+            areaDiving: 0.23,           // 유선형 다이빙 단면적 (m^2) -> 종단속도 약 68.5 m/s (246.6 km/h)
+            springK: 850.0,             // 거미줄 탄성 계수 (N/m)
+            damperC: 140.0,             // 거미줄 감쇠 계수 (N·s/m)
+            pullImpulsePower: 420.0,    // 신체 견인(Pull-Up) 가속 파워 (N)
+            minGroundClearance: 2.2     // 도로 위 차량/지면 스침 최소 고도 (m)
+        };
+
+        // 캐릭터 상태 관리 객체
+        const SpiderState = {
+            pos: new THREE.Vector3(0, 355, 0),
+            vel: new THREE.Vector3(0, 0, 8),
+            acc: new THREE.Vector3(0, -9.81, 0),
+            isDiving: false,
+            isWebAttached: false,
+            anchorPoint: new THREE.Vector3(),
+            ropeRestLength: 65.0,
+            currentRopeDist: 0.0,
+            entrySpeed: 0.0,
+            currentTension: 0.0,
+            centripetalAcc: 0.0,
+            gForce: 1.0,
+            dragForceMag: 0.0,
+            stateName: 'FREE_FALL',
+            apexHangTimer: 0.0
+        };
+
+        // ============================================================================
+        // Three.js 3D 맨해튼 도심 환경 및 스파이더맨 렌더링 초기화
+        // ============================================================================
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x132238);
+        scene.fog = new THREE.FogExp2(0x132238, 0.0011);
+
+        const width = window.innerWidth || 800;
+        const height = window.innerHeight || 600;
+        const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 2500);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        // 조명 설정 (도심 빌딩과 스파이더맨이 선명하게 보이도록 밝기 강화)
+        const ambientLight = new THREE.AmbientLight(0x94a3b8, 1.35);
+        scene.add(ambientLight);
+
+        const hemiLight = new THREE.HemisphereLight(0xbae6fd, 0x1e293b, 0.85);
+        scene.add(hemiLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.6);
+        sunLight.position.set(120, 450, 180);
+        scene.add(sunLight);
+
+        // 도로 및 차선 생성 (맨해튼 애비뉴)
+        const roadGeometry = new THREE.PlaneGeometry(60, 10000);
+        const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+        const road = new THREE.Mesh(roadGeometry, roadMaterial);
+        road.rotation.x = -Math.PI / 2;
+        scene.add(road);
+
+        // 노란색 중앙선 및 그리드
+        const gridHelper = new THREE.GridHelper(10000, 1000, 0xf59e0b, 0x334155);
+        gridHelper.position.y = 0.05;
+        scene.add(gridHelper);
+
+        // 도로 위 차량 (옐로우캡 택시 & SUV 스케일 레퍼런스) 생성
+        const cars = [];
+        const taxiMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.3 });
+        const suvMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.2 });
+        const carGeo = new THREE.BoxGeometry(2.0, 1.5, 4.5);
+
+        for (let z = -500; z < 4500; z += 35) {
+            const isTaxi = Math.random() > 0.45;
+            const car = new THREE.Mesh(carGeo, isTaxi ? taxiMat : suvMat);
+            const laneX = (Math.random() > 0.5 ? 1 : -1) * (4 + Math.floor(Math.random() * 2) * 5);
+            car.position.set(laneX, 0.75, z);
+            scene.add(car);
+            cars.push({ mesh: car, speed: isTaxi ? 12 : 9, dir: laneX > 0 ? 1 : -1 });
+        }
+
+        // 맨해튼 고층 빌딩 숲 생성 (양측에 배치하여 실제 앵커 포인트 역할 수행)
+        const buildings = [];
+        const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
+        const buildingMaterials = [
+            new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.5, roughness: 0.2 }),
+            new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.3, roughness: 0.4 }),
+            new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.7, roughness: 0.1 })
+        ];
+
+        for (let z = -400; z < 4500; z += 42) {
+            // 좌/우측 빌딩 배치
+            [-1, 1].forEach(side => {
+                const bWidth = 26 + Math.random() * 14;
+                const depth = 26 + Math.random() * 12;
+                // 초기 다이빙 구역(z: 0 근처)에는 420m급 초고층 빌딩 배치
+                const bHeight = (Math.abs(z) < 120) ? 380 + Math.random() * 60 : 130 + Math.random() * 220;
+                const bMat = buildingMaterials[Math.floor(Math.random() * buildingMaterials.length)];
+                const bMesh = new THREE.Mesh(buildingGeo, bMat);
+
+                const posX = side * (28 + bWidth / 2);
+                bMesh.scale.set(bWidth, bHeight, depth);
+                bMesh.position.set(posX, bHeight / 2, z);
+                scene.add(bMesh);
+                buildings.push({ mesh: bMesh, side, posX, height: bHeight, z, width: bWidth });
+            });
+        }
+
+        // 스파이더맨 캐릭터 메쉬 생성 (신장 1.70m 비례)
+        const spiderGroup = new THREE.Group();
+        const torsoGeo = new THREE.CylinderGeometry(0.28, 0.22, 0.85, 12);
+        const redMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.3 });
+        const blueMat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.4 });
+        const torso = new THREE.Mesh(torsoGeo, redMat);
+        spiderGroup.add(torso);
+
+        const headGeo = new THREE.SphereGeometry(0.24, 16, 16);
+        const head = new THREE.Mesh(headGeo, redMat);
+        head.position.y = 0.62;
+        spiderGroup.add(head);
+
+        const legsGeo = new THREE.CylinderGeometry(0.22, 0.16, 0.75, 12);
+        const legs = new THREE.Mesh(legsGeo, blueMat);
+        legs.position.y = -0.75;
+        spiderGroup.add(legs);
+
+        scene.add(spiderGroup);
+
+        // 거미줄 라인(Web Line) 및 앵커 포인트 마커
+        const webLineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+        const webLineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+        const webLine = new THREE.Line(webLineGeo, webLineMat);
+        webLine.visible = false;
+        scene.add(webLine);
+
+        const anchorMarker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.9, 12, 12),
+            new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+        );
+        anchorMarker.visible = false;
+        scene.add(anchorMarker);
+
+        // 궤적(Trail) 라인 렌더링
+        const maxTrailPoints = 180;
+        const trailPositions = new Float32Array(maxTrailPoints * 3);
+        const trailGeo = new THREE.BufferGeometry();
+        trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+        const trailMat = new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.5 });
+        const trailLine = new THREE.Line(trailGeo, trailMat);
+        scene.add(trailLine);
+        let trailIndex = 0;
+
+        // ============================================================================
+        // 핵심 물리 엔진 함수: 거미줄 발사, 장력 계산, 능동 견인 가속
+        // ============================================================================
+
+        // 전방 상단 빌딩에 거미줄 발사 (Anchor Raycast 탐색 시뮬레이션)
+        function attachWeb() {
+            if (SpiderState.isWebAttached) return;
+
+            const currentSpeed = SpiderState.vel.length();
+            SpiderState.entrySpeed = currentSpeed; // 진입 속도(v_entry) 기록!
+
+            // 스파이더맨 전방 상단(약 40~60도)에 위치한 실제 빌딩 벽면 포인트 계산
+            const side = (Math.random() > 0.5 ? 1 : -1);
+            const anchorX = side * 26.0; // 좌/우 빌딩 외벽 좌표
+
+            // 현재 고도와 속도에 맞춰 자연스러운 진자 반경(약 60~75m)이 형성되도록 앵커 설정
+            const targetRopeLen = THREE.MathUtils.clamp(SpiderState.pos.y * 0.85, 38.0, 72.0);
+            const anchorY = Math.max(SpiderState.pos.y + targetRopeLen * 0.55, 45.0);
+            const forwardOffset = Math.max(targetRopeLen * 0.72, 28.0);
+            const anchorZ = SpiderState.pos.z + forwardOffset;
+
+            SpiderState.anchorPoint.set(anchorX, anchorY, anchorZ);
+
+            // 초기 거미줄 길이(L) 설정: 현재 거리보다 약간 짧거나 같게 잡아 낙하 궤적에서 자연스럽게 팽팽해지도록 설정
+            const initialDist = SpiderState.pos.distanceTo(SpiderState.anchorPoint);
+            SpiderState.ropeRestLength = initialDist * 0.96;
+
+            SpiderState.isWebAttached = true;
+            SpiderState.apexHangTimer = 0;
+            webLine.visible = true;
+            anchorMarker.position.copy(SpiderState.anchorPoint);
+            anchorMarker.visible = true;
+        }
+
+        // 거미줄 해제 (포물선 슬링샷 런칭 및 시네마틱 체공 진입)
+        function releaseWeb() {
+            if (!SpiderState.isWebAttached) return;
+            SpiderState.isWebAttached = false;
+            SpiderState.currentTension = 0;
+            SpiderState.centripetalAcc = 0;
+            webLine.visible = false;
+            anchorMarker.visible = false;
+
+            // 상승 중 웹 해제 시 영화 오프닝(00:22~00:25)과 동일한 시네마틱 체공(Hang-time) 타이머 활성화
+            if (SpiderState.vel.y > 8.0) {
+                SpiderState.apexHangTimer = 1.6;
+                SpiderState.stateName = 'APEX_LAUNCH';
+            } else {
+                SpiderState.stateName = 'FREE_FALL';
+            }
+        }
+
+        // 능동 신체 견인 가속 (Active Web Pull-Up Boost - 1인칭 구간 양손 당기기 재현)
+        function triggerWebPullBoost(dt) {
+            if (!SpiderState.isWebAttached) return;
+
+            // 거미줄 유효 길이를 단축(Reel-in)
+            SpiderState.ropeRestLength = Math.max(22.0, SpiderState.ropeRestLength - 18.0 * dt);
+
+            // 현재 속도 모멘텀에 비례하여 접선(Tangent) 및 앵커 방향으로 물리적 힘 추가
+            // (정지 상태에서는 살짝 당겨지고, 고속 스윙 중에는 140~153km/h로 가속)
+            const toAnchor = new THREE.Vector3().subVectors(SpiderState.anchorPoint, SpiderState.pos).normalize();
+            const forwardTangent = new THREE.Vector3(0, toAnchor.z, -toAnchor.y).normalize();
+            if (forwardTangent.z < 0) forwardTangent.negate();
+
+            const momentumFactor = THREE.MathUtils.clamp(SpiderState.vel.length() / 30.0, 0.35, 1.35);
+            const pullForce = PhysicsConfig.pullImpulsePower * momentumFactor;
+
+            const boostAccel = forwardTangent.multiplyScalar(pullForce * 0.85 / PhysicsConfig.mass)
+                .add(toAnchor.multiplyScalar(pullForce * 0.45 / PhysicsConfig.mass));
+
+            SpiderState.vel.addScaledVector(boostAccel, dt);
+            SpiderState.stateName = 'WEB_PULL_BOOST';
+        }
+
+        // ============================================================================
+        // 고정 시간 간격(FixedDeltaTime) 물리 연산 루프
+        // ============================================================================
+        function stepPhysics(dt) {
+            const m = PhysicsConfig.mass;
+            const g = PhysicsConfig.gravity;
+
+            // 1. 중력 가속도 적용 (포물선 정점 부근 시네마틱 Hang-time 시 0.6G 보정)
+            let effectiveGravity = g;
+            if (!SpiderState.isWebAttached && SpiderState.apexHangTimer > 0) {
+                SpiderState.apexHangTimer -= dt;
+                if (Math.abs(SpiderState.vel.y) < 12.0) {
+                    effectiveGravity = g * 0.58; // 영화 00:23~00:25 팔짱 체공 연출 물리 보정
+                }
+            }
+            const forceGravity = new THREE.Vector3(0, -m * effectiveGravity, 0);
+
+            // 2. 자세별 실시간 대기 항력(Air Drag: F_d = 0.5 * rho * v^2 * C_d * A)
+            const speed = SpiderState.vel.length();
+            const cd = SpiderState.isDiving ? PhysicsConfig.cdDiving : PhysicsConfig.cdNormal;
+            const area = SpiderState.isDiving ? PhysicsConfig.areaDiving : PhysicsConfig.areaNormal;
+            const dragMag = 0.5 * PhysicsConfig.airDensity * speed * speed * cd * area;
+            SpiderState.dragForceMag = dragMag;
+
+            const forceDrag = new THREE.Vector3();
+            if (speed > 0.001) {
+                forceDrag.copy(SpiderState.vel).normalize().multiplyScalar(-dragMag);
+            }
+
+            // 3. 비대칭 스프링-댐퍼 거미줄 장력 연산 (Asymmetric Spring-Damper Pendulum)
+            const forceTension = new THREE.Vector3();
+            SpiderState.currentTension = 0;
+            SpiderState.centripetalAcc = 0;
+
+            if (SpiderState.isWebAttached) {
+                const toAnchor = new THREE.Vector3().subVectors(SpiderState.anchorPoint, SpiderState.pos);
+                const dist = toAnchor.length();
+                SpiderState.currentRopeDist = dist;
+                const dirToAnchor = toAnchor.clone().normalize();
+
+                // 지면 충돌 방지 보정 (Ground Clearance Assist: 00:15~00:16 차량 상단 1.5~2.2m 스침 구현)
+                if (SpiderState.pos.y < PhysicsConfig.minGroundClearance + 4.0 && SpiderState.vel.y < 0) {
+                    const maxAllowedRope = Math.max(10.0, SpiderState.anchorPoint.y - PhysicsConfig.minGroundClearance);
+                    if (SpiderState.ropeRestLength > maxAllowedRope) {
+                        SpiderState.ropeRestLength = THREE.MathUtils.lerp(SpiderState.ropeRestLength, maxAllowedRope, dt * 8.0);
+                    }
+                }
+
+                // 거미줄이 초기 길이(L)보다 늘어났을 때만(Taut) 장력 발생, 짧을 때는 느슨한 상태(Slack)
+                const stretch = dist - SpiderState.ropeRestLength;
+                if (stretch > 0) {
+                    SpiderState.stateName = (SpiderState.stateName === 'WEB_PULL_BOOST') ? 'WEB_PULL_BOOST' : 'WEB_SWING_TAUT';
+
+                    // 반경 방향 상대 속도(v_radial) 계산
+                    const radialVel = SpiderState.vel.dot(dirToAnchor); // 앵커에서 멀어지면 음수(-)
+
+                    // 후크의 법칙 스프링 힘 + 댐퍼 감쇠력: F_t = k * stretch - c * v_radial
+                    const springForce = PhysicsConfig.springK * stretch;
+                    const damperForce = -PhysicsConfig.damperC * radialVel;
+                    const totalTensionMag = Math.max(0, springForce + damperForce);
+
+                    SpiderState.currentTension = totalTensionMag;
+                    forceTension.copy(dirToAnchor).multiplyScalar(totalTensionMag);
+
+                    // 접선 속도 기반 실시간 구심 가속도(a_c = v_tangent^2 / r) 산출
+                    const radialVec = dirToAnchor.clone().multiplyScalar(radialVel);
+                    const tangentVelVec = new THREE.Vector3().subVectors(SpiderState.vel, radialVec);
+                    const tangentSpeed = tangentVelVec.length();
+                    SpiderState.centripetalAcc = (tangentSpeed * tangentSpeed) / Math.max(dist, 1.0);
+                } else {
+                    SpiderState.stateName = 'WEB_SLACK';
+                }
+            } else {
+                if (SpiderState.apexHangTimer <= 0) {
+                    SpiderState.stateName = SpiderState.isDiving ? 'HEAD_FIRST_DIVE' : 'FREE_FALL';
+                }
+            }
+
+            // 4. 합력(Net Force) 및 가속도 적분 (Semi-implicit Euler Integration)
+            const totalForce = new THREE.Vector3()
+                .add(forceGravity)
+                .add(forceDrag)
+                .add(forceTension);
+
+            SpiderState.acc.copy(totalForce).divideScalar(m);
+            SpiderState.vel.addScaledVector(SpiderState.acc, dt);
+            SpiderState.pos.addScaledVector(SpiderState.vel, dt);
+
+            // 5. 지면 최소 고도 클램핑 (바닥 뚫림 방지)
+            if (SpiderState.pos.y < 1.5) {
+                SpiderState.pos.y = 1.5;
+                if (SpiderState.vel.y < 0) {
+                    SpiderState.vel.y = 0;
+                    // 지면 마찰 감쇠
+                    SpiderState.vel.x *= 0.96;
+                    SpiderState.vel.z *= 0.96;
+                }
+            }
+
+            // 6. 체감 G-Force 산출 (구심 가속도 + 중력 반작용)
+            if (SpiderState.isWebAttached && SpiderState.currentTension > 0) {
+                SpiderState.gForce = (SpiderState.currentTension / m) / g;
+            } else {
+                SpiderState.gForce = (forceDrag.length() / m) / g;
+            }
+        }
+
+        // ============================================================================
+        // 시나리오 프리셋 함수 (1. 영화 오프닝 고공 다이빙 / 2. 저속 정지 스윙 / 3. 중속 스윙)
+        // ============================================================================
+        function loadScenarioPreset(type) {
+            releaseWeb();
+            if (type === 'dive') {
+                // 시나리오 1: 360m 상공 유선형 다이빙 시작 -> 최고 246km/h 도달
+                SpiderState.pos.set(0, 360, 0);
+                SpiderState.vel.set(0, -12, 14);
+                SpiderState.isDiving = true;
+                SpiderState.entrySpeed = 0;
+            } else if (type === 'low') {
+                // 시나리오 2: 정지 상태(v_entry = 0 m/s)에서 거미줄 부착 -> 급발진 없이 부드러운 진자 운동 검증
+                SpiderState.pos.set(0, 48, 0);
+                SpiderState.vel.set(0, 0, 0.5);
+                SpiderState.isDiving = false;
+                attachWeb();
+            } else if (type === 'mid') {
+                // 시나리오 3: 도심 연속 중속 스윙 (v_entry = 28 m/s, 약 100 km/h)
+                SpiderState.pos.set(0, 65, 0);
+                SpiderState.vel.set(0, -6, 27.3);
+                SpiderState.isDiving = false;
+                attachWeb();
+            }
+            // 프리셋 전환 시 카메라를 즉시 스파이더맨 근처로 이동시켜 빈 화면 방지
+            camera.position.set(SpiderState.pos.x + 3.5, SpiderState.pos.y + 4.0, SpiderState.pos.z - 10.0);
+            camera.lookAt(SpiderState.pos);
+        }
+
+        // ============================================================================
+        // 사용자 입력 핸들러 (키보드, 버튼 및 마우스 카메라 회전 연동)
+        // ============================================================================
+        const keys = { pull: false };
+        let isFirstPerson = false;
+        let isMouseDragging = false;
+        let prevMouseX = 0;
+        let prevMouseY = 0;
+        let camYawOffset = 0;
+        let camPitchOffset = 0;
+
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            isMouseDragging = true;
+            prevMouseX = e.clientX;
+            prevMouseY = e.clientY;
+        });
+        window.addEventListener('mouseup', () => {
+            isMouseDragging = false;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!isMouseDragging) return;
+            const dx = e.clientX - prevMouseX;
+            const dy = e.clientY - prevMouseY;
+            prevMouseX = e.clientX;
+            prevMouseY = e.clientY;
+            camYawOffset = THREE.MathUtils.clamp(camYawOffset - dx * 0.008, -1.8, 1.8);
+            camPitchOffset = THREE.MathUtils.clamp(camPitchOffset + dy * 0.008, -0.8, 1.2);
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                SpiderState.isDiving = true;
+            }
+            if (e.code === 'Space') {
+                e.preventDefault();
+                attachWeb();
+            }
+            if (e.code === 'KeyW' || e.code === 'KeyE') {
+                keys.pull = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+                SpiderState.isDiving = false;
+            }
+            if (e.code === 'Space') {
+                releaseWeb();
+            }
+            if (e.code === 'KeyW' || e.code === 'KeyE') {
+                keys.pull = false;
+            }
+        });
+
+        // 하단 UI 버튼 마우스/터치 이벤트
+        const btnDive = document.getElementById('btn-action-dive');
+        const btnWeb = document.getElementById('btn-action-web');
+        const btnPull = document.getElementById('btn-action-pull');
+
+        btnDive.addEventListener('mousedown', () => SpiderState.isDiving = true);
+        btnDive.addEventListener('mouseup', () => SpiderState.isDiving = false);
+        btnDive.addEventListener('mouseleave', () => SpiderState.isDiving = false);
+
+        btnWeb.addEventListener('mousedown', () => attachWeb());
+        btnWeb.addEventListener('mouseup', () => releaseWeb());
+
+        btnPull.addEventListener('mousedown', () => keys.pull = true);
+        btnPull.addEventListener('mouseup', () => keys.pull = false);
+        btnPull.addEventListener('mouseleave', () => keys.pull = false);
+
+        // 프리셋 및 튜닝 슬라이더 이벤트
+        document.getElementById('btn-preset-dive').addEventListener('click', () => loadScenarioPreset('dive'));
+        document.getElementById('btn-preset-low').addEventListener('click', () => loadScenarioPreset('low'));
+        document.getElementById('btn-preset-mid').addEventListener('click', () => loadScenarioPreset('mid'));
+
+        document.getElementById('slider-mass').addEventListener('input', (e) => {
+            PhysicsConfig.mass = parseFloat(e.target.value);
+            document.getElementById('lbl-mass').textContent = PhysicsConfig.mass;
+        });
+        document.getElementById('slider-k').addEventListener('input', (e) => {
+            PhysicsConfig.springK = parseFloat(e.target.value);
+            document.getElementById('lbl-k').textContent = PhysicsConfig.springK;
+        });
+        document.getElementById('slider-c').addEventListener('input', (e) => {
+            PhysicsConfig.damperC = parseFloat(e.target.value);
+            document.getElementById('lbl-c').textContent = PhysicsConfig.damperC;
+        });
+
+        const btnCamMode = document.getElementById('btn-cam-mode');
+        btnCamMode.addEventListener('click', () => {
+            isFirstPerson = !isFirstPerson;
+            btnCamMode.textContent = isFirstPerson ? '1인칭 시점 (POV Mode)' : '3인칭 추적 시점 (3rd Person)';
+            spiderGroup.visible = !isFirstPerson;
+        });
+
+        // ============================================================================
+        // HUD 업데이트 및 카메라 동적 연출 (FOV 확장, 구심 가속도 롤 틸트)
+        // ============================================================================
+        function updateHUDAndCamera(dt) {
+            const speedMs = SpiderState.vel.length();
+            const speedKmh = speedMs * 3.6;
+
+            document.getElementById('val-ms').textContent = speedMs.toFixed(1);
+            document.getElementById('val-kmh').textContent = speedKmh.toFixed(1);
+            document.getElementById('val-g').textContent = SpiderState.gForce.toFixed(2);
+            document.getElementById('val-ac').textContent = SpiderState.centripetalAcc.toFixed(1);
+            document.getElementById('val-alt').textContent = SpiderState.pos.y.toFixed(1);
+            document.getElementById('val-ventry').textContent = SpiderState.entrySpeed.toFixed(1);
+            document.getElementById('val-tension').textContent = Math.round(SpiderState.currentTension).toLocaleString();
+            document.getElementById('val-kgf').textContent = Math.round(SpiderState.currentTension / 9.81).toLocaleString();
+            document.getElementById('val-drag').textContent = Math.round(SpiderState.dragForceMag);
+
+            if (SpiderState.isWebAttached) {
+                const stretchPct = Math.max(0, ((SpiderState.currentRopeDist - SpiderState.ropeRestLength) / SpiderState.ropeRestLength) * 100);
+                document.getElementById('val-roplen').textContent = SpiderState.currentRopeDist.toFixed(1);
+                document.getElementById('val-stretch').textContent = stretchPct.toFixed(1);
+            } else {
+                document.getElementById('val-roplen').textContent = '-';
+                document.getElementById('val-stretch').textContent = '0.0';
+            }
+
+            const badge = document.getElementById('state-badge');
+            badge.textContent = SpiderState.stateName;
+
+            // 역학적 에너지 비율 바 업데이트 (E_p = mgh vs E_k = 0.5mv^2)
+            const ep = PhysicsConfig.mass * PhysicsConfig.gravity * Math.max(0, SpiderState.pos.y);
+            const ek = 0.5 * PhysicsConfig.mass * speedMs * speedMs;
+            const totalE = Math.max(1, ep + ek);
+            document.getElementById('bar-ep').style.width = `${(ep / totalE) * 100}%`;
+            document.getElementById('bar-ek').style.width = `${(ek / totalE) * 100}%`;
+
+            // 고속 이동 시 화면 가장자리 스피드 라인 연출
+            const speedOverlay = document.getElementById('speed-overlay');
+            speedOverlay.style.opacity = speedMs > 45 ? Math.min(1, (speedMs - 45) / 25).toFixed(2) : 0;
+
+            // 스파이더맨 메쉬 위치 및 속도 방향 회전 정렬
+            spiderGroup.position.copy(SpiderState.pos);
+            if (speedMs > 0.5) {
+                const lookTarget = SpiderState.pos.clone().add(SpiderState.vel);
+                spiderGroup.lookAt(lookTarget);
+                spiderGroup.rotateX(Math.PI / 2);
+            }
+
+            // 거미줄 라인 업데이트
+            if (SpiderState.isWebAttached) {
+                const posArr = webLine.geometry.attributes.position.array;
+                posArr[0] = SpiderState.pos.x;
+                posArr[1] = SpiderState.pos.y + 0.4;
+                posArr[2] = SpiderState.pos.z;
+                posArr[3] = SpiderState.anchorPoint.x;
+                posArr[4] = SpiderState.anchorPoint.y;
+                posArr[5] = SpiderState.anchorPoint.z;
+                webLine.geometry.attributes.position.needsUpdate = true;
+            }
+
+            // 궤적(Trail) 포인트 갱신
+            trailPositions[trailIndex * 3] = SpiderState.pos.x;
+            trailPositions[trailIndex * 3 + 1] = SpiderState.pos.y;
+            trailPositions[trailIndex * 3 + 2] = SpiderState.pos.z;
+            trailIndex = (trailIndex + 1) % maxTrailPoints;
+            trailGeo.attributes.position.needsUpdate = true;
+
+            // 속도 비례 동적 FOV (75도 ~ 105도)
+            const targetFov = THREE.MathUtils.lerp(75, 106, THREE.MathUtils.clamp((speedMs - 15) / 53.5, 0, 1));
+            camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 6.0);
+            camera.updateProjectionMatrix();
+
+            // 카메라 위치 및 구심 가속도 기반 롤(Roll) 틸트 연출
+            if (isFirstPerson) {
+                // 1인칭(POV) 카메라 (영화 00:18~00:21 재현)
+                camera.position.copy(SpiderState.pos).add(new THREE.Vector3(0, 0.65, 0.3));
+                const forwardLook = SpiderState.pos.clone().add(SpiderState.vel.clone().normalize().multiplyScalar(30));
+                camera.lookAt(forwardLook);
+            } else {
+                // 3인칭 시네마틱 추적 카메라 + 마우스 드래그 궤도 오프셋 반영
+                const velDir = speedMs > 1.0 ? SpiderState.vel.clone().normalize() : new THREE.Vector3(0, 0, 1);
+                const baseOffset = velDir.clone().multiplyScalar(-9.5).add(new THREE.Vector3(2.2, 2.8 + camPitchOffset * 5.0, 0));
+                baseOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camYawOffset);
+                const desiredCamPos = SpiderState.pos.clone().add(baseOffset);
+                desiredCamPos.y = Math.max(1.8, desiredCamPos.y);
+                camera.position.lerp(desiredCamPos, Math.min(1.0, dt * 10.0));
+                camera.lookAt(SpiderState.pos.clone().add(velDir.multiplyScalar(5.0)));
+            }
+
+            // 구심 가속도가 높을수록 회전 중심축으로 카메라 Roll 기울임
+            if (SpiderState.isWebAttached && SpiderState.centripetalAcc > 15.0) {
+                const sideSign = Math.sign(SpiderState.anchorPoint.x - SpiderState.pos.x);
+                const rollAngle = sideSign * THREE.MathUtils.clamp((SpiderState.centripetalAcc - 15.0) / 180.0, 0, 0.28);
+                camera.rotation.z = THREE.MathUtils.lerp(camera.rotation.z, rollAngle, dt * 5.0);
+            }
+        }
+
+        // 무한 도심 스크롤링 (Z축 전진에 맞춰 빌딩/차량 재배치)
+        function recycleCityElements() {
+            buildings.forEach(b => {
+                if (b.z < SpiderState.pos.z - 250) {
+                    b.z += 4900;
+                    b.mesh.position.z = b.z;
+                }
+            });
+            cars.forEach(c => {
+                c.mesh.position.z += c.speed * c.dir * 0.016;
+                if (c.mesh.position.z < SpiderState.pos.z - 300) {
+                    c.mesh.position.z += 4800;
+                }
+            });
+            road.position.z = SpiderState.pos.z;
+            gridHelper.position.z = Math.floor(SpiderState.pos.z / 10) * 10;
+        }
+
+        // 메인 루프 실행
+        let lastTime = performance.now();
+        const fixedDt = 1 / 60;
+        let accumulator = 0;
+
+        function animate(now) {
+            requestAnimationFrame(animate);
+            const frameDt = Math.min((now - lastTime) / 1000, 0.1) || 0.016;
+            lastTime = now;
+            accumulator += frameDt;
+
+            while (accumulator >= fixedDt) {
+                if (keys.pull) {
+                    triggerWebPullBoost(fixedDt);
+                }
+                stepPhysics(fixedDt);
+                accumulator -= fixedDt;
+            }
+
+            recycleCityElements();
+            updateHUDAndCamera(frameDt);
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function () {
+            const w = container.clientWidth || window.innerWidth || 800;
+            const h = container.clientHeight || window.innerHeight || 600;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+
+            // 초기 실행: 영화 오프닝 고공 다이빙 시나리오로 시작 및 카메라 즉시 동기화
+            loadScenarioPreset('dive');
+            requestAnimationFrame(animate);
+        };
+
+        window.addEventListener('resize', () => {
+            const w = container.clientWidth || window.innerWidth || 800;
+            const h = container.clientHeight || window.innerHeight || 600;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+        });
+    </script>
+</body>
+</html>
